@@ -1,0 +1,159 @@
+---
+title: "Bayesian methods for binary timeseries"
+output:
+  tint::tintHtml:
+    toc: true
+    toc_depth: 2
+always_allow_html: yes
+---
+<style>
+.math {
+  font-size: 12pt;
+}
+</style>
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, cache = TRUE, fig.margin = TRUE)
+library(tufte)
+library(tint)
+library(knitr)
+library(kableExtra)
+
+# plot theme
+ggplot2::theme_set(
+  ggplot2::theme_minimal(base_size = 14) +
+  ggplot2::theme(
+    panel.grid.minor.y = ggplot2::element_blank(),
+    panel.grid.major.y = ggplot2::element_blank(),
+    panel.grid.minor.x = ggplot2::element_blank(),
+    panel.spacing = ggplot2::unit(1, "lines"),
+    strip.text.y = ggplot2::element_blank(),
+    legend.position = "bottom"
+   )
+)
+```
+
+`r margin_note("Binary data often also arises through a process of simplifying analysis: eg. replacing a question which could be on a continuous scale, with a cut-off: for instance, analysis of exam pass/fail rates is a simpler problem to explore than the full distribution of exam marks")`
+
+Binary data occurs in many natural settings where we wish to understand the relative likelihood of one of two outcomes occuring (often referred to as failure $0$ and success). For instance whether or not a newborn child is a boy or a girl (in this context, one might be cautioned against the failure/success terminology).
+
+The natural statistic of interest for binary questions is the underlying proportion of successes. Given a sample of $n$ observations with $0 \leq s \leq n$ successes, the classical (maximum likelihood) estimate for the success rate is simply $s/n$, the proportion of the observed data that were successes.
+
+`r margin_note("[Robinson's](http://varianceexplained.org/r/empirical-bayes-book/) introduction to Empirical Bayes through baseball statistics is an excellent resource for learning the basics of binary inference. Unfortunately it does not explore timeseries.")`
+In many instances it is likely that this binary data makes up a timeseries: for example in baseball, the proportion of hits a player makes out of all balls they are thrown (apparently known as *At Bats*). In this context we would expect this proportion to vary over time - both due to game specific covariates (eg. who pitched the ball), and temporal affects (eg. improving performance with experience).
+
+In such applications any underlying success rate at a given point in time is likely to be correlated with success rates within the recent past and future. Estimates for the success rate that do not take into account this correlation will therefore likely be overly susceptible to natural variance.
+
+Our focus will be on exploring methods for analysing binary time series under two challenging conditions:
+
+* Where the number of observations at each time point is low - meaning that estimates of success rates which don't take into account nearby observtaions are likely to be too broad to provide insight.
+
+* Where data does not arrive at routine intervals - meaning that methods that are based on differencing/neighbouring statistics are not very easy to define. 
+
+
+# The Data
+
+`r margin_note("Data is made available through the [Stack Exchange API](https://api.stackexchange.com/docs); this can be queried in R usnig the [stackr](https://github.com/dgrtwo/stackr) package - coincidentally written by the same David Robinson referenced above.")`
+For an open source data set that exhibits the features defined above, we consider the acceptance rate of answers to [Stack Exchange](https://stackexchange.com/) questions. In particular we will look at the data of a single user [Xi'an](https://stats.stackexchange.com/users/7224/xian) on Cross Validated (stats.stackexchange) who is at the time of writing the top ranked user for the Bayesian tag.
+
+```{r}
+
+library(stackr) # devtools::install_github("https://github.com/dgrtwo/stackr")
+library(tidyverse)
+library(lubridate)
+
+dat <- stack_users(id =  7224, "answers",
+                   site = "stats.stackexchange.com",
+                   pagesize = 100, num_pages = 20) %>%
+  
+  # summarise by date
+  mutate(date = trunc(creation_date, unit = "day") %>% as.Date()) %>%
+  group_by(date) %>%
+  summarise(
+    answered = n(),
+    accepted = sum(is_accepted)
+  ) %>%
+  ungroup()
+```
+
+```{r, echo = FALSE, fig.width = 5,  fig.cap="The number of questions answered in March 2020 illustrates that the data shows both low volumes, and intermittent frequency"}
+ggplot(data = dat %>% filter(between(date, as.Date("2020-03-01"), as.Date("2020-03-31")))) +
+  geom_point(aes(date, answered)) +
+  scale_y_continuous(expand = c(0, 1)) +
+  scale_x_date(date_breaks = "2 days", date_labels = "%d") +
+  xlab("Date (March 2020)") + ylab("Answers")
+```
+
+A sample of the first 6 rows of the data are shown below; for the most part we work with data that is aggregated to a daily level - we will however consider one model that looks at variation within days at the end.
+
+```{r, echo = FALSE}
+dat %>% 
+  head %>%
+  kable() %>%
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+
+# Non-Bayesian Methods
+
+## (Aggregated) Binomial proportions
+Likely the first work around one might look to apply is to further aggregate the data, eg. up to monthly views. Even at this level the volume of data remains sufficiently low as to render the estimated acceptance rates useless.
+
+```{r, fig.margin = TRUE}
+dat_monthly <- dat %>%
+  group_by(date= floor_date(date, unit = "month") ) %>%
+  summarise_all( ~sum(.))
+
+naive_monthly_model <- dat_monthly %>%
+  mutate(
+    p_mle  =  accepted/answered,
+    lwr_80 = qnorm(0.1, mean = p_mle, sd = sqrt( p_mle * (1-p_mle)/answered)),
+    upr_80 = qnorm(0.9, mean = p_mle, sd = sqrt( p_mle * (1-p_mle)/answered))
+)
+
+ggplot(naive_monthly_model, aes(date, p_mle)) + geom_line() +
+  geom_ribbon(aes(date,ymin = lwr_80, ymax = upr_80), alpha = 0.2)
+```
+
+## Loess Smoothing
+
+## Binary ARIMA
+
+# Bayesian Approaches
+
+## Hierarchical logistic regression
+```{r, results="hide"}
+library(rstan)
+library(rstanarm)
+library(tidybayes)
+
+naive_hb_fit <- stan_glmer(cbind(accepted,answered-accepted) ~1 + (1|date),data = dat_monthly, 
+                 family = binomial(link = "logit"))
+
+naive_hb_model <- naive_hb_fit %>%
+  spread_draws(`(Intercept)`, b[,date]) %>%
+  mode_qi(mode = `(Intercept)` + b, .width = 0.8) %>%
+  mutate(
+    date = str_remove(date, "date:") %>% as.Date(),
+    p_mode = plogis(mode),
+    lwr_80 = plogis(.lower),
+    upr_80 = plogis(.upper)
+  )
+  
+ggplot(naive_hb_model, aes(date, p_mode)) + geom_line() +
+  geom_ribbon(aes(date,ymin = lwr_80, ymax = upr_80), alpha = 0.2)  
+```
+
+## Propogating Priors
+```{r}
+prior_prop <- dat %>%
+  mutate(
+    alpha = cumsum(accepted) +1/2,
+    beta  = cumsum(answered) - cumsum(accepted) + 1/2,
+    p_mode = alpha/(alpha + beta),
+    lwr_80 = qbeta(0.1, alpha, beta),
+    upr_80 = qbeta(0.9, alpha, beta)
+  )
+
+ggplot(prior_prop, aes(date, p_mode)) + geom_line() +
+  geom_ribbon(aes(date,ymin = lwr_80, ymax = upr_80), alpha = 0.2)  
+```  
