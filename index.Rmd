@@ -30,6 +30,17 @@ ggplot2::theme_set(
     legend.position = "bottom"
    )
 )
+
+# table theme
+# table theme
+kable_theme <- function(data, ...){
+  kable(data,...) #%>%
+  #   kable_styling(
+  #     bootstrap_options = "condensed",
+  #     full_width = FALSE,
+  #     position = "left"
+  # )
+}
 ```
 
 `r margin_note("Binary data often also arises through a process of simplifying analysis: eg. replacing a question which could be on a continuous scale, with a cut-off: for instance, analysis of exam pass/fail rates is a simpler problem to explore than the full distribution of exam marks")`
@@ -56,8 +67,8 @@ Our focus will be on exploring methods for analysing binary time series under tw
 For an open source data set that exhibits the features defined above, we consider the acceptance rate of answers to [Stack Exchange](https://stackexchange.com/) questions. In particular we will look at the data of a single user [Xi'an](https://stats.stackexchange.com/users/7224/xian) on Cross Validated (stats.stackexchange) who is at the time of writing the top ranked user for the Bayesian tag.
 
 ```{r}
-
-library(stackr) # devtools::install_github("https://github.com/dgrtwo/stackr")
+# devtools::install_github("https://github.com/dgrtwo/stackr")
+library(stackr) 
 library(tidyverse)
 library(lubridate)
 
@@ -75,7 +86,7 @@ dat <- stack_users(id =  7224, "answers",
   ungroup()
 ```
 
-```{r, echo = FALSE, fig.width = 5,  fig.cap="The number of questions answered in March 2020 illustrates that the data shows both low volumes, and intermittent frequency"}
+```{r, echo = FALSE, fig.cap="The number of questions answered in March 2020 illustrates that the data shows both low volumes, and intermittent frequency"}
 ggplot(data = dat %>% filter(between(date, as.Date("2020-03-01"), as.Date("2020-03-31")))) +
   geom_point(aes(date, answered)) +
   scale_y_continuous(expand = c(0, 1)) +
@@ -88,33 +99,52 @@ A sample of the first 6 rows of the data are shown below; for the most part we w
 ```{r, echo = FALSE}
 dat %>% 
   head %>%
-  kable() %>%
-  kableExtra::kable_styling(full_width = FALSE)
+  kable()
 ```
 
 
 # Non-Bayesian Methods
 
 ## (Aggregated) Binomial proportions
-Likely the first work around one might look to apply is to further aggregate the data, eg. up to monthly views. Even at this level the volume of data remains sufficiently low as to render the estimated acceptance rates useless.
+Putting aside the option of treating days as independent, likely the simplest model would be to aggregate data up to a suitable level which ensures a sufficient volume of data to be able to treat units as independent, whilst maintaing relevance/utility of the outcome.
 
-```{r, fig.margin = TRUE}
+For our purposes a reasonable level of aggregation may be considered to be monthly data (aggregating by year feels too coarse); at this point we derive acceptance rates and confidence intervals at the monthly level using the standard (Maximum Likelihood, and normal approximation) method.
+
+```{r}
 dat_monthly <- dat %>%
   group_by(date= floor_date(date, unit = "month") ) %>%
   summarise_all( ~sum(.))
 
-naive_monthly_model <- dat_monthly %>%
-  mutate(
-    p_mle  =  accepted/answered,
-    lwr_80 = qnorm(0.1, mean = p_mle, sd = sqrt( p_mle * (1-p_mle)/answered)),
-    upr_80 = qnorm(0.9, mean = p_mle, sd = sqrt( p_mle * (1-p_mle)/answered))
-)
 
-ggplot(naive_monthly_model, aes(date, p_mle)) + geom_line() +
-  geom_ribbon(aes(date,ymin = lwr_80, ymax = upr_80), alpha = 0.2)
+mle_model <- dat_monthly %>%
+  mutate(
+    # MLE estimate for the mean and variance of a binomial sample
+    p_hat  =  accepted/answered,
+    var_hat = p_hat * (1-p_hat) / answered,
+    # 80% confidence interval via normal approximation
+    lwr_80 = qnorm(0.1, mean = p_hat, sd = sqrt(var_hat)),
+    upr_80 = qnorm(0.9, mean = p_hat, sd = sqrt(var_hat))
+)
 ```
 
+```{r, echo = FALSE, fig.margin = TRUE, fig.cap = "Even at a monthly level there is high variance between months and no discernable trend."}
+ggplot(mle_model, aes(date, p_hat)) + geom_line() +
+  geom_ribbon(aes(date,ymin = lwr_80, ymax = upr_80), alpha = 0.2) +
+  xlab("Date") + ylab("Acceptance Rate")
+```
+
+### Pros
+* The method is standard, and well explained in various resources. 
+* Easy to implement.
+
+### Cons
+* The resulting confidence intervals do not instill confidence.
+* There is little indication that we can discern trends.
+* We cannot estimate acceptance rates for months which do not have any data.
+
 ## Loess Smoothing
+
+
 
 ## Binary ARIMA
 
