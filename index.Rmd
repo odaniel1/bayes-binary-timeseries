@@ -1,7 +1,7 @@
 ---
 title: "Bayesian methods for binary timeseries"
 output:
-  tint::tintHtml:
+  tint::tintHtml::
     toc: true
     toc_depth: 2
 always_allow_html: yes
@@ -12,11 +12,16 @@ always_allow_html: yes
 }
 </style>
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, cache = TRUE, fig.margin = TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, cache = FALSE, fig.margin = TRUE)
 library(tufte)
 library(tint)
 library(knitr)
 library(kableExtra)
+library(drake)
+library(here)
+library(tidyverse)
+
+model_plots <- readd(model_plots)
 
 # plot theme
 ggplot2::theme_set(
@@ -31,16 +36,6 @@ ggplot2::theme_set(
    )
 )
 
-# table theme
-# table theme
-kable_theme <- function(data, ...){
-  kable(data,...) #%>%
-  #   kable_styling(
-  #     bootstrap_options = "condensed",
-  #     full_width = FALSE,
-  #     position = "left"
-  # )
-}
 ```
 
 `r margin_note("Binary data often also arises through a process of simplifying analysis: eg. replacing a question which could be on a continuous scale, with a cut-off: for instance, analysis of exam pass/fail rates is a simpler problem to explore than the full distribution of exam marks")`
@@ -66,28 +61,9 @@ Our focus will be on exploring methods for analysing binary time series under tw
 `r margin_note("Data is made available through the [Stack Exchange API](https://api.stackexchange.com/docs); this can be queried in R usnig the [stackr](https://github.com/dgrtwo/stackr) package - coincidentally written by the same David Robinson referenced above.")`
 For an open source data set that exhibits the features defined above, we consider the acceptance rate of answers to [Stack Exchange](https://stackexchange.com/) questions. In particular we will look at the data of a single user [Xi'an](https://stats.stackexchange.com/users/7224/xian) on Cross Validated (stats.stackexchange) who is at the time of writing the top ranked user for the Bayesian tag.
 
-```{r}
-# devtools::install_github("https://github.com/dgrtwo/stackr")
-library(stackr) 
-library(tidyverse)
-library(lubridate)
-
-dat <- stack_users(id =  7224, "answers",
-                   site = "stats.stackexchange.com",
-                   pagesize = 100, num_pages = 20) %>%
-  
-  # summarise by date
-  mutate(date = trunc(creation_date, unit = "day") %>% as.Date()) %>%
-  group_by(date) %>%
-  summarise(
-    answered = n(),
-    accepted = sum(is_accepted)
-  ) %>%
-  ungroup()
-```
 
 ```{r, echo = FALSE, fig.cap="The number of questions answered in March 2020 illustrates that the data shows both low volumes, and intermittent frequency"}
-ggplot(data = dat %>% filter(between(date, as.Date("2020-03-01"), as.Date("2020-03-31")))) +
+ggplot(data = readd(answers_daily) %>% filter(between(date, as.Date("2020-03-01"), as.Date("2020-03-31")))) +
   geom_point(aes(date, answered)) +
   scale_y_continuous(expand = c(0, 1)) +
   scale_x_date(date_breaks = "2 days", date_labels = "%d") +
@@ -97,7 +73,7 @@ ggplot(data = dat %>% filter(between(date, as.Date("2020-03-01"), as.Date("2020-
 A sample of the first 6 rows of the data are shown below; for the most part we work with data that is aggregated to a daily level - we will however consider one model that looks at variation within days at the end.
 
 ```{r, echo = FALSE}
-dat %>% 
+readd(answers_daily) %>% 
   head %>%
   kable()
 ```
@@ -110,32 +86,14 @@ Putting aside the option of treating days as independent, likely the simplest mo
 
 For our purposes a reasonable level of aggregation may be considered to be monthly data (aggregating by year feels too coarse); at this point we derive acceptance rates and confidence intervals at the monthly level using the standard (Maximum Likelihood, and normal approximation) method.
 
-```{r}
-dat_monthly <- dat %>%
-  group_by(date= floor_date(date, unit = "month") ) %>%
-  summarise_all( ~sum(.))
 
-
-mle_model <- dat_monthly %>%
-  mutate(
-    # MLE estimate for the mean and variance of a binomial sample
-    p_hat  =  accepted/answered,
-    var_hat = p_hat * (1-p_hat) / answered,
-    # 80% confidence interval via normal approximation
-    lwr_80 = qnorm(0.1, mean = p_hat, sd = sqrt(var_hat)),
-    upr_80 = qnorm(0.9, mean = p_hat, sd = sqrt(var_hat))
-)
-```
-
-```{r, echo = FALSE, fig.margin = TRUE, fig.cap = "Even at a monthly level there is high variance between months and no discernable trend."}
-ggplot(mle_model, aes(date, p_hat)) + geom_line() +
-  geom_ribbon(aes(date,ymin = lwr_80, ymax = upr_80), alpha = 0.2) +
-  xlab("Date") + ylab("Acceptance Rate")
+```{r,echo = FALSE, results = 'asis',  fig.margin = TRUE,fig.cap = "Even at a monthly level there is high variance between months and no discernable trend."}
+model_plots$plot[[which(model_plots$method == "monthly-MLE")]]
 ```
 
 ### Pros
 * The method is standard, and well explained in various resources. 
-* Easy to implement.
+* Easy to implement, and extend to re-fit for multiple independent individuals.
 
 ### Cons
 * The resulting confidence intervals do not instill confidence.
@@ -151,39 +109,12 @@ ggplot(mle_model, aes(date, p_hat)) + geom_line() +
 # Bayesian Approaches
 
 ## Hierarchical logistic regression
-```{r, results="hide"}
-library(rstan)
-library(rstanarm)
-library(tidybayes)
+```{r, results="hide", echo = FALSE}
 
-naive_hb_fit <- stan_glmer(cbind(accepted,answered-accepted) ~1 + (1|date),data = dat_monthly, 
-                 family = binomial(link = "logit"))
-
-naive_hb_model <- naive_hb_fit %>%
-  spread_draws(`(Intercept)`, b[,date]) %>%
-  mode_qi(mode = `(Intercept)` + b, .width = 0.8) %>%
-  mutate(
-    date = str_remove(date, "date:") %>% as.Date(),
-    p_mode = plogis(mode),
-    lwr_80 = plogis(.lower),
-    upr_80 = plogis(.upper)
-  )
-  
-ggplot(naive_hb_model, aes(date, p_mode)) + geom_line() +
-  geom_ribbon(aes(date,ymin = lwr_80, ymax = upr_80), alpha = 0.2)  
 ```
 
 ## Propogating Priors
-```{r}
-prior_prop <- dat %>%
-  mutate(
-    alpha = cumsum(accepted) +1/2,
-    beta  = cumsum(answered) - cumsum(accepted) + 1/2,
-    p_mode = alpha/(alpha + beta),
-    lwr_80 = qbeta(0.1, alpha, beta),
-    upr_80 = qbeta(0.9, alpha, beta)
-  )
 
-ggplot(prior_prop, aes(date, p_mode)) + geom_line() +
-  geom_ribbon(aes(date,ymin = lwr_80, ymax = upr_80), alpha = 0.2)  
-```  
+```{r,echo = FALSE, results = 'asis',  fig.margin = TRUE}
+model_plots$plot[[which(model_plots$method == "prior-propogation")]]
+```

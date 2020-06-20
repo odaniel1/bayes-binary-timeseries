@@ -17,7 +17,6 @@
 <link href="site_libs/tint-css-2015.12.29/tint.css" rel="stylesheet" />
 <link href="site_libs/highlightjs-9.12.0/default.css" rel="stylesheet" />
 <script src="site_libs/highlightjs-9.12.0/highlight.js"></script>
-<script src="site_libs/kePrint-0.0.1/kePrint.js"></script>
 
 <style type="text/css">code{white-space: pre;}</style>
 <script type="text/javascript">
@@ -47,20 +46,6 @@ if (window.hljs) {
 <h1 class="title toc-ignore">Bayesian methods for binary timeseries</h1>
 
 
-<div id="TOC">
-<ul>
-<li><a href="#the-data">The Data</a></li>
-<li><a href="#non-bayesian-methods">Non-Bayesian Methods</a><ul>
-<li><a href="#aggregated-binomial-proportions">(Aggregated) Binomial proportions</a></li>
-<li><a href="#loess-smoothing">Loess Smoothing</a></li>
-<li><a href="#binary-arima">Binary ARIMA</a></li>
-</ul></li>
-<li><a href="#bayesian-approaches">Bayesian Approaches</a><ul>
-<li><a href="#hierarchical-logistic-regression">Hierarchical logistic regression</a></li>
-<li><a href="#propogating-priors">Propogating Priors</a></li>
-</ul></li>
-</ul>
-</div>
 
 <style>
 .math {
@@ -80,29 +65,13 @@ if (window.hljs) {
 <div id="the-data" class="section level1">
 <h1>The Data</h1>
 <p><label for="tufte-mn-3" class="margin-toggle">⊕</label><input type="checkbox" id="tufte-mn-3" class="margin-toggle"><span class="marginnote">Data is made available through the <a href="https://api.stackexchange.com/docs">Stack Exchange API</a>; this can be queried in R usnig the <a href="https://github.com/dgrtwo/stackr">stackr</a> package - coincidentally written by the same David Robinson referenced above.</span> For an open source data set that exhibits the features defined above, we consider the acceptance rate of answers to <a href="https://stackexchange.com/">Stack Exchange</a> questions. In particular we will look at the data of a single user <a href="https://stats.stackexchange.com/users/7224/xian">Xi’an</a> on Cross Validated (stats.stackexchange) who is at the time of writing the top ranked user for the Bayesian tag.</p>
-<pre class="r"><code>library(stackr) # devtools::install_github(&quot;https://github.com/dgrtwo/stackr&quot;)
-library(tidyverse)
-library(lubridate)
-
-dat &lt;- stack_users(id =  7224, &quot;answers&quot;,
-                   site = &quot;stats.stackexchange.com&quot;,
-                   pagesize = 100, num_pages = 20) %&gt;%
-  
-  # summarise by date
-  mutate(date = trunc(creation_date, unit = &quot;day&quot;) %&gt;% as.Date()) %&gt;%
-  group_by(date) %&gt;%
-  summarise(
-    answered = n(),
-    accepted = sum(is_accepted)
-  ) %&gt;%
-  ungroup()</code></pre>
 <p>
 <span class="marginnote shownote"><!--
-<div class="figure">--> <img src="index_files/figure-html/unnamed-chunk-2-1.png" alt="The number of questions answered in March 2020 illustrates that the data shows both low volumes, and intermittent frequency" width="480"  /> <!--
+<div class="figure">--> <img src="index_files/figure-html/unnamed-chunk-1-1.png" alt="The number of questions answered in March 2020 illustrates that the data shows both low volumes, and intermittent frequency" width="672"  /> <!--
 <p class="caption marginnote">-->The number of questions answered in March 2020 illustrates that the data shows both low volumes, and intermittent frequency<!--</p>--> <!--</div>--></span>
 </p>
 <p>A sample of the first 6 rows of the data are shown below; for the most part we work with data that is aggregated to a daily level - we will however consider one model that looks at variation within days at the end.</p>
-<table class="table" style="width: auto !important; margin-left: auto; margin-right: auto;">
+<table>
 <thead>
 <tr>
 <th style="text-align:left;">
@@ -190,25 +159,28 @@ accepted
 <h1>Non-Bayesian Methods</h1>
 <div id="aggregated-binomial-proportions" class="section level2">
 <h2>(Aggregated) Binomial proportions</h2>
-<p>Likely the first work around one might look to apply is to further aggregate the data, eg. up to monthly views. Even at this level the volume of data remains sufficiently low as to render the estimated acceptance rates useless.</p>
+<p>Putting aside the option of treating days as independent, likely the simplest model would be to aggregate data up to a suitable level which ensures a sufficient volume of data to be able to treat units as independent, whilst maintaing relevance/utility of the outcome.</p>
+<p>For our purposes a reasonable level of aggregation may be considered to be monthly data (aggregating by year feels too coarse); at this point we derive acceptance rates and confidence intervals at the monthly level using the standard (Maximum Likelihood, and normal approximation) method.</p>
 <p>
 <span class="marginnote shownote"><!--
-<div class="figure">--> <img src="index_files/figure-html/unnamed-chunk-4-1.png" alt=" " width="672"  /> <!--
-<p class="caption marginnote">--> <!--</p>--> <!--</div>--></span>
+<div class="figure">--> <img src="index_files/figure-html/unnamed-chunk-4-1.png" alt="Even at a monthly level there is high variance between months and no discernable trend." width="672"  /> <!--
+<p class="caption marginnote">-->Even at a monthly level there is high variance between months and no discernable trend.<!--</p>--> <!--</div>--></span>
 </p>
-<pre class="r"><code>dat_monthly &lt;- dat %&gt;%
-  group_by(date= floor_date(date, unit = &quot;month&quot;) ) %&gt;%
-  summarise_all( ~sum(.))
-
-naive_monthly_model &lt;- dat_monthly %&gt;%
-  mutate(
-    p_mle  =  accepted/answered,
-    lwr_80 = qnorm(0.1, mean = p_mle, sd = sqrt( p_mle * (1-p_mle)/answered)),
-    upr_80 = qnorm(0.9, mean = p_mle, sd = sqrt( p_mle * (1-p_mle)/answered))
-)
-
-ggplot(naive_monthly_model, aes(date, p_mle)) + geom_line() +
-  geom_ribbon(aes(date,ymin = lwr_80, ymax = upr_80), alpha = 0.2)</code></pre>
+<div id="pros" class="section level3">
+<h3>Pros</h3>
+<ul>
+<li>The method is standard, and well explained in various resources.</li>
+<li>Easy to implement.</li>
+</ul>
+</div>
+<div id="cons" class="section level3">
+<h3>Cons</h3>
+<ul>
+<li>The resulting confidence intervals do not instill confidence.</li>
+<li>There is little indication that we can discern trends.</li>
+<li>We cannot estimate acceptance rates for months which do not have any data.</li>
+</ul>
+</div>
 </div>
 <div id="loess-smoothing" class="section level2">
 <h2>Loess Smoothing</h2>
@@ -221,30 +193,6 @@ ggplot(naive_monthly_model, aes(date, p_mle)) + geom_line() +
 <h1>Bayesian Approaches</h1>
 <div id="hierarchical-logistic-regression" class="section level2">
 <h2>Hierarchical logistic regression</h2>
-<p>
-<span class="marginnote shownote"><!--
-<div class="figure">--> <img src="index_files/figure-html/unnamed-chunk-5-1.png" alt=" " width="672"  /> <!--
-<p class="caption marginnote">--> <!--</p>--> <!--</div>--></span>
-</p>
-<pre class="r"><code>library(rstan)
-library(rstanarm)
-library(tidybayes)
-
-naive_hb_fit &lt;- stan_glmer(cbind(accepted,answered-accepted) ~1 + (1|date),data = dat_monthly, 
-                 family = binomial(link = &quot;logit&quot;))
-
-naive_hb_model &lt;- naive_hb_fit %&gt;%
-  spread_draws(`(Intercept)`, b[,date]) %&gt;%
-  mode_qi(mode = `(Intercept)` + b, .width = 0.8) %&gt;%
-  mutate(
-    date = str_remove(date, &quot;date:&quot;) %&gt;% as.Date(),
-    p_mode = plogis(mode),
-    lwr_80 = plogis(.lower),
-    upr_80 = plogis(.upper)
-  )
-  
-ggplot(naive_hb_model, aes(date, p_mode)) + geom_line() +
-  geom_ribbon(aes(date,ymin = lwr_80, ymax = upr_80), alpha = 0.2)  </code></pre>
 </div>
 <div id="propogating-priors" class="section level2">
 <h2>Propogating Priors</h2>
@@ -253,17 +201,6 @@ ggplot(naive_hb_model, aes(date, p_mode)) + geom_line() +
 <div class="figure">--> <img src="index_files/figure-html/unnamed-chunk-6-1.png" alt=" " width="672"  /> <!--
 <p class="caption marginnote">--> <!--</p>--> <!--</div>--></span>
 </p>
-<pre class="r"><code>prior_prop &lt;- dat %&gt;%
-  mutate(
-    alpha = cumsum(accepted) +1/2,
-    beta  = cumsum(answered) - cumsum(accepted) + 1/2,
-    p_mode = alpha/(alpha + beta),
-    lwr_80 = qbeta(0.1, alpha, beta),
-    upr_80 = qbeta(0.9, alpha, beta)
-  )
-
-ggplot(prior_prop, aes(date, p_mode)) + geom_line() +
-  geom_ribbon(aes(date,ymin = lwr_80, ymax = upr_80), alpha = 0.2)  </code></pre>
 </div>
 </div>
 

@@ -1,4 +1,4 @@
 name: "Bayesian methods for binary timeseries"
 output_dir: "."
 output:
-  tint::tintHtml:
+    tint::tintHtml
