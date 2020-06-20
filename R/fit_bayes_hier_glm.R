@@ -5,7 +5,8 @@ fit_bayes_hier_glm <- function(answers){
   stan_fit <- stan_glmer(
       formula = cbind(accepted, answered-accepted) ~ 1 + (1|date),
       data = answers,
-      family = binomial(link = "logit")
+      family = binomial(link = "logit"),
+      cores = 4
     )
   
   estimate <- stan_fit %>%
