@@ -82,14 +82,19 @@ readd(answers_daily) %>%
 # Non-Bayesian Methods
 
 ## (Aggregated) Binomial proportions
-Putting aside the option of treating days as independent, likely the simplest model would be to aggregate data up to a suitable level which ensures a sufficient volume of data to be able to treat units as independent, whilst maintaing relevance/utility of the outcome.
 
-For our purposes a reasonable level of aggregation may be considered to be monthly data (aggregating by year feels too coarse); at this point we derive acceptance rates and confidence intervals at the monthly level using the standard (Maximum Likelihood, and normal approximation) method.
-
-
+#### [Code Implementation](https://github.com/odaniel1/bayes-binary-timeseries/tree/refactor-drake/R/fit_mle.R)
 ```{r,echo = FALSE, results = 'asis',  fig.margin = TRUE,fig.cap = "Even at a monthly level there is high variance between months and no discernable trend."}
 model_plots$plot[[which(model_plots$method == "monthly-MLE")]]
 ```
+
+Putting aside the option of treating days as independent, likely the simplest model would be to aggregate data to a level where we are comfortable to assume independence between the periods, and fit simple binomial proporiton methods.
+
+The level of aggregation needs to balance sufficient volume of data with the relevence to the question at hand; for instance in this application aggregating by year feels too infrequent, so we consider monthly averages.
+
+At this point acceptance rates and confidence intervals are estimated using Maximum Likelihood..
+
+
 
 ### Pros
 * The method is standard, and well explained in various resources. 
@@ -103,18 +108,108 @@ model_plots$plot[[which(model_plots$method == "monthly-MLE")]]
 ## Loess Smoothing
 
 
+```{r,echo =FALSE}
+plot <- readd(answers_daily) %>%
+  uncount(answered, .id = "answer_no") %>%
+  mutate(accepted = 1 * (answer_no <= accepted)) %>%
+  ggplot(., aes(date, accepted)) +
+  geom_smooth(method= "loess", level = 0.8,
+    size =0.5, color = "black", alpha= 0.2) +
+  coord_cartesian(ylim = c(0,1)) +
+  labs(x = "Date", y = "Acceptance Rate")
+
+plot
+```
+
+This is the default smoothing algorithm applied when calling `ggplot2::geom_smooth()` on data sets with fewer than 1,000 observations.
+
+According to [Wikipedia](https://en.wikipedia.org/wiki/Local_regression) it is a form of non-parametric regression which
+
+> [Fits]  simple models to localized subsets of the data to build up a function that describes the deterministic part of the variation in the data, point by point.
+
+The pros and cons described below focus on the use of LOESS within `ggplot2`.
+
+### Pros
+* Very easy to use.
+* Easy to refit on multiple data sets.
+
+### Cons
+* When applied directly to binary data can yield confidence intervals that extend beyond [0,1].
+* Very easy to use - but hard to explain, and likely that analysts may use without being aware of the underlying assumptions.
+* Does not yield a mathematical formula for the outputs - eg. the analysis is the graph.
+* The algorithm is not stable to presenting the data as individual binary outcomes, or as a binomial proportion.
 
 ## Binary ARIMA
+
+### Pros
+* x
+
+### Cons
+* x
 
 # Bayesian Approaches
 
 ## Hierarchical logistic regression
-```{r, results="hide", echo = FALSE}
 
+#### [Code Implementation](https://github.com/odaniel1/bayes-binary-timeseries/tree/refactor-drake/R/fit_bayes_bayes_hier_glm.R)
+```{r, results="hide", echo = FALSE}
+model_plots$plot[[which(model_plots$method == "bayes-hierarchical-glm")]]
 ```
+
+Hierarchical modelling (in frequentist settings known as *mixed effects modelling*) supposes that the parameters for a set of covariates in a model can be considered to have been sampled from some global distribution.
+
+Typically this is used to facilitate *partial pooling* of information between similar but not identical observations: allowing us to separate out our uncertainty in a primary parameter value, from variation due to small fluctuations in the hierarchical variables. 
+
+Time series appear to be a prototypical setting in which to apply such a model - as we suppose that the accuracy rate on a given day may deviate slightly from some overall accuracy.
+
+The limitation is that this does not directly put a correlation structure on the deviations - meaning that the approach is only really suited to stationary time series: for which arguably much simpler approaches would suffice.
+
+### Pros
+* Partial pooling partially accounts for time series effects.
+
+### Cons
+* Off-the-shelf applications would only be suitable for stationary time series.
 
 ## Propogating Priors
 
-```{r,echo = FALSE, results = 'asis',  fig.margin = TRUE}
+#### [Code Implementation](https://github.com/odaniel1/bayes-binary-timeseries/tree/refactor-drake/R/fit_prior_propogation.R)
+
+
+`r margin_note("Assuming a prior $\\text{Beta}(\\alpha,\\beta)$, and given an observation of $n$ samples with $s$ successes, the posterior is distributed as $\\text{Beta}( \\alpha + s, \\beta + n - s).$")`
+
+Bayesian calculation for a single binomial samples is particularly straight forward when working with the conjugate prior, the Beta distribution.
+
+It is tempting to consider a timeseries approach where we propogate forward in time using the posterior distribution at the $(n-1)$-th point in time as the prior distribution for the sample at time $n$.
+
+```{r, results="hide", echo = FALSE}
 model_plots$plot[[which(model_plots$method == "prior-propogation")]]
 ```
+
+The immediate limitation of this approach is that over time the confidence interval narrows due to the accumulation of the entire history of data (whilst this is not guaranteed it is inevitable in most applied settings where there is not high volatility in the underlying success rate).
+
+`r margin_note("If the Jeffrey's prior,  $\\alpha = \\beta = 1/2$ is used, the Bayesian credible interval will align with the frequentist confidence interval.")`
+An alternative approach using the simple conjugate prior method is a moving averages approach - however in this instance the model has little advantage to a non-Bayesian moving average model (eg. adapting the first model above). 
+
+### Pros
+* Simple to implement.
+* Possibly can be extended to a setting with covariates/hierarchical structure (eg. adapting [Robinson's](http://varianceexplained.org/r/empirical-bayes-book/) approach.
+
+### Cons
+* Time correlation is one directional - information in future observations cannot be used to inform past estimates.
+* Requires time points to be evenly spread - or an assumption that shorter/longer gaps between samples do not effect the correlation.
+
+## Random walk logistic regression 
+#### [Code Implementation](https://github.com/odaniel1/bayes-binary-timeseries/tree/refactor-drake/R/fit_bayes_random_walk.R)
+```{r, results="hide", echo = FALSE}
+model_plots$plot[[which(model_plots$method == "bayes-random-walk")]]
+```
+
+## Gaussian Process Logistic Regression
+```{r, results="hide", echo = FALSE}
+# model_plots$plot[[which(model_plots$method == "bayes-random-walk-daily")]]
+```
+### Pros
+* x
+
+### Cons
+* x
