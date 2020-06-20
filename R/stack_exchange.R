@@ -1,8 +1,8 @@
-get_se_answers <- function(user_id, ...){
+get_se_answers <- function(user_id, site,  ...){
   require(stackr)
   
   dat <- stack_users(id =  user_id, "answers",
-                     site = "stats.stackexchange.com",
+                     site = site,
                      pagesize = 100, num_pages = 20) %>%
     
     # summarise; summary level determined by arguments in ...
