@@ -5,14 +5,13 @@ rstan_options(auto_write = TRUE)
 options(mc.cores = parallel::detectCores())
 
 plan <- drake_plan(
-  # most models will be fit against data for daily answers.
-  # answers_daily = get_se_answers(user_id = 7224, "stats.stackexchange.com", date = as.Date(trunc(creation_date, unit = "day"))),
-  # answers_monthly = get_se_answers(user_id = 7224, "stats.stackexchange.com", date = as.Date(trunc(creation_date, unit = "month"))),
   
-  answers_daily = get_se_answers(user_id = 712603, "stackoverflow.com", date = as.Date(trunc(creation_date, unit = "day"))),
-  answers_monthly = get_se_answers(user_id = 712603, "stackoverflow.com", date = as.Date(trunc(creation_date, unit = "month"))),
+  answers_tagged = get_se_answers(user_id = 712603, "stackoverflow.com", pagesize = 100, num_pages = 20) %>%
+    tag_se_answers(site = "stackoverflow.com", sleep = 0.5),
   
-  
+  answers_daily  = summarise_se_answers(answers_tagged, date = as.Date(trunc(creation_date, unit = "day"))),
+  answers_monthly = summarise_se_answers(answers_tagged, date = as.Date(trunc(creation_date, unit = "month"))),
+
   # models
   monthly_mle = fit_mle(answers_monthly),
   prior_propogation = fit_prior_propogation(answers_daily),
