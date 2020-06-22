@@ -14,6 +14,8 @@ plan <- drake_plan(
 
   # models
   monthly_mle = fit_mle(answers_monthly),
+  logistic_regression_1 = fit_logistic_regression(answers_daily, deg = 1) %>% mutate(method = "logistic-regression-1"),
+  logistic_regression_2 = fit_logistic_regression(answers_daily, deg = 2) %>% mutate(method = "logistic-regression-2"),
   prior_propogation = fit_prior_propogation(answers_daily),
   bayes_hier_glm = fit_bayes_hier_glm(answers_monthly),
   bayes_random_walk = fit_bayes_random_walk(answers_monthly),
@@ -21,6 +23,8 @@ plan <- drake_plan(
   # plots
   model_plots = bind_rows(
     monthly_mle,
+    logistic_regression_1,
+    logistic_regression_2,
     prior_propogation,
     bayes_hier_glm,
     bayes_random_walk

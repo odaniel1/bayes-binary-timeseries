@@ -1,5 +1,5 @@
 ---
-title: "Bayesian methods for binary timeseries"
+title: "Methods for binary time series analysis"
 output:
   tint::tintHtml::
     toc: true
@@ -38,39 +38,50 @@ ggplot2::theme_set(
 
 ```
 
-`r margin_note("Binary data often also arises through a process of simplifying analysis: eg. replacing a question which could be on a continuous scale, with a cut-off: for instance, analysis of exam pass/fail rates is a simpler problem to explore than the full distribution of exam marks")`
+`r margin_note("Binary data often also arises through reduction of a complex question to a yes/no simplification: for instance, analysing exam pass/fail rates is seemingly a simpler problem to explore than analysing the full distribution of exam marks.\n In such settings it can be recommended to study the more detailed question so that we are modelling the true data generating process.")`
 
-Binary data occurs in many natural settings where we wish to understand the relative likelihood of one of two outcomes occuring (often referred to as failure $0$ and success). For instance whether or not a newborn child is a boy or a girl (in this context, one might be cautioned against the failure/success terminology).
+Analysis of binary data naturally occurs in settings where we wish to understand the relative likelihood of one of two outcomes occurring (often referred to as failure, $0$, and success, $1$). For instance whether or not a newborn child is a boy or a girl (in this context, one might be cautioned against the failure/success terminology).
 
-The natural statistic of interest for binary questions is the underlying proportion of successes. Given a sample of $n$ observations with $0 \leq s \leq n$ successes, the classical (maximum likelihood) estimate for the success rate is simply $s/n$, the proportion of the observed data that were successes.
+If we observe several binary outcomes from a population the overall number of successes is binomially distributed; given a sample of $n$ observations with $0 \leq s \leq n$ successes, the classical (maximum likelihood) estimate for the success rate is simply $s/n$, the proportion of the observed data that were successes.
 
-`r margin_note("[Robinson's](http://varianceexplained.org/r/empirical-bayes-book/) introduction to Empirical Bayes through baseball statistics is an excellent resource for learning the basics of binary inference. Unfortunately it does not explore timeseries.")`
-In many instances it is likely that this binary data makes up a timeseries: for example in baseball, the proportion of hits a player makes out of all balls they are thrown (apparently known as *At Bats*). In this context we would expect this proportion to vary over time - both due to game specific covariates (eg. who pitched the ball), and temporal affects (eg. improving performance with experience).
+If our data is collected over a period of time,then it is appropriate to perform a time series analysis: allowing the success rate at a given point in time to be correlated with rates in the past and future. Failing to account for this correlation will lead to higher variance in our estimates.
 
-In such applications any underlying success rate at a given point in time is likely to be correlated with success rates within the recent past and future. Estimates for the success rate that do not take into account this correlation will therefore likely be overly susceptible to natural variance.
+For the purposes of this work, our focus is not so much on using time series as a method of forecasting future behaviour, as it is to explain observed data, and best account for uncertainty in the observations. We are interested in this question in the presence of two challenging conditions:
 
-Our focus will be on exploring methods for analysing binary time series under two challenging conditions:
+* The number of observations at each time point is low - meaning that estimates of success rates which don't take into account nearby observations are likely to be too broad to provide insight.
 
-* Where the number of observations at each time point is low - meaning that estimates of success rates which don't take into account nearby observtaions are likely to be too broad to provide insight.
+* Data need not arrive at routine intervals - meaning that methods that are based on differencing/neighbouring statistics are not obvious to define.
 
-* Where data does not arrive at routine intervals - meaning that methods that are based on differencing/neighbouring statistics are not very easy to define. 
+## Caveat Emptor
 
+This work should be considered exploratory. It is neither exhaustive (there are likely many other models, and I may have overlooked industry standard approaches), nor authoritative (I do not claim to be an expert on time series).
+
+Moreover - the models which are presented include ones that can instantly be ruled out for unsuitability. These are however informative to understand the limitations, and to justify the need for greater complexity.
+
+As presented the models assume no further covariates beyond the time dependence; where it is clear that additional variables could be factored in, this is highlighted in the text.
+
+`r margin_note("David Robinson's book  [Introduction to Empirical Bayes](http://varianceexplained.org/r/empirical-bayes-book/), provides an accessible and practical introduction to binomial modelling in a Bayesian setting, with R.")`
+
+The focus is primarily on Bayesian methods, due in part to my own personal biases and interests, though some of the models (eg. Random Walk model) are facilitated by the flexibility afforded by working with [Stan](https://mc-stan.org/), whilst others are inherently Bayesian in their nature (Gaussian Process models).
+
+At present there is minimal focus on choosing a *best* model: in particular there is no presentation of model fit metrics, or evaluation against held-out data. Rather, where pros and cons are discussed these are to be seen as generic to the method, and not the application.
+
+Any amendments, corrections and suggestions are welcomed as [GitHub issues](https://github.com/odaniel1/bayes-binary-timeseries/issues).
 
 # The Data
 
 `r margin_note("Data is made available through the [Stack Exchange API](https://api.stackexchange.com/docs); this can be queried in R usnig the [stackr](https://github.com/dgrtwo/stackr) package - coincidentally written by the same David Robinson referenced above.")`
-For an open source data set that exhibits the features defined above, we consider the acceptance rate of answers to [Stack Exchange](https://stackexchange.com/) questions. In particular we will look at the data of a single user [Xi'an](https://stats.stackexchange.com/users/7224/xian) on Cross Validated (stats.stackexchange) who is at the time of writing the top ranked user for the Bayesian tag.
+For an open source data set that exhibits the features defined above, we consider the acceptance rate of answers to [Stack Exchange](https://stackexchange.com/) questions. Since David Robinson has already been name-checked in multiple side notes, it feels reasonable to pay homage and analyse hist [Stack Overflow](https://stackoverflow.com/users/712603/david-robinson) answers.
 
-
-```{r, echo = FALSE, fig.cap="The number of questions answered in March 2020 illustrates that the data shows both low volumes, and intermittent frequency"}
-ggplot(data = readd(answers_daily) %>% filter(between(date, as.Date("2020-03-01"), as.Date("2020-03-31")))) +
+```{r, echo = FALSE, fig.cap="The number of questions answered exhibits both low frequency, and the presence of days with no answers leads to intermittency."}
+ggplot(data = readd(answers_daily)) +
   geom_point(aes(date, answered)) +
   scale_y_continuous(expand = c(0, 1)) +
-  scale_x_date(date_breaks = "2 days", date_labels = "%d") +
-  xlab("Date (March 2020)") + ylab("Answers")
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  xlab("") + ylab("Answers (Daily)")
 ```
 
-A sample of the first 6 rows of the data are shown below; for the most part we work with data that is aggregated to a daily level - we will however consider one model that looks at variation within days at the end.
+For the most part we will work with summary data of the number of answers made, and accepted, by day. A sample of which is as below:
 
 ```{r, echo = FALSE}
 readd(answers_daily) %>% 
@@ -88,25 +99,21 @@ readd(answers_daily) %>%
 model_plots$plot[[which(model_plots$method == "monthly-MLE")]]
 ```
 
-Putting aside the option of treating days as independent, likely the simplest model would be to aggregate data to a level where we are comfortable to assume independence between the periods, and fit simple binomial proporiton methods.
+Putting aside the option of treating days as independent, likely the simplest model would be to aggregate data to a level where we are comfortable to assume independence between the periods, and fit simple binomial proportion methods.
 
-The level of aggregation needs to balance sufficient volume of data with the relevence to the question at hand; for instance in this application aggregating by year feels too infrequent, so we consider monthly averages.
+The level of aggregation needs to balance sufficient volume of data with the relevance to the question at hand; for instance in this application aggregating by year feels too infrequent, so we consider monthly averages.
 
-At this point acceptance rates and confidence intervals are estimated using Maximum Likelihood..
-
-
+At this point acceptance rates and confidence intervals are estimated using Maximum Likelihood.
 
 ### Pros
 * The method is standard, and well explained in various resources. 
 * Easy to implement, and extend to re-fit for multiple independent individuals.
 
 ### Cons
-* The resulting confidence intervals do not instill confidence.
-* There is little indication that we can discern trends.
+* The resulting confidence intervals do not instill confidence: eg. too much inter-period variance.
 * We cannot estimate acceptance rates for months which do not have any data.
 
 ## Loess Smoothing
-
 
 ```{r,echo =FALSE}
 plot <- readd(answers_daily) %>%
@@ -132,20 +139,51 @@ The pros and cons described below focus on the use of LOESS within `ggplot2`.
 ### Pros
 * Very easy to use.
 * Easy to refit on multiple data sets.
+* Provides estimates for periods without observations.
 
 ### Cons
-* When applied directly to binary data can yield confidence intervals that extend beyond [0,1].
 * Very easy to use - but hard to explain, and likely that analysts may use without being aware of the underlying assumptions.
+* When applied directly to binary data can yield confidence intervals that extend beyond [0,1].
 * Does not yield a mathematical formula for the outputs - eg. the analysis is the graph.
-* The algorithm is not stable to presenting the data as individual binary outcomes, or as a binomial proportion.
+* The algorithm is not invariant under data formatting: eg. providing individual binary outcomes vs binomial proportions returns different curves.
 
-## Binary ARIMA
+## Logistic regression with time as covariate
+
+#### [Code Implementation](https://github.com/odaniel1/bayes-binary-timeseries/tree/refactor-drake/R/fit_bayes_bayes_hier_glm.R)
+```{r, results="hide", echo = FALSE, fig.cap="Linear in time"}
+model_plots$plot[[which(model_plots$method == "logistic-regression-1")]]
+```
+
+```{r, results="hide", echo = FALSE, fig.cap = "Quadratic in time"}
+model_plots$plot[[which(model_plots$method == "logistic-regression-2")]]
+```
+
+A common first approach to time series modelling is to simply fit a regression model (in our context, a logistic regression model due to the binary data) treating the time coordinate as a continuous covariate for modelling.
+
+Polynomial regression extends this idea by including not only the time coordinate as a covariate, but powers of this value too. This allows us to generalise away from assuming a linear trend, but there is the perennial question of what degree of polynomial to use (with too high a degree leads to over fitting).
+
+More broadly this approach can be extended to look at any number of regression variants: eg. piece wise models, and more generally splines.
+
 
 ### Pros
-* x
+* Easy to refit on multiple data sets.
+* Can easily adapt to include further covariates.
+* Flexible to generalisation.
 
 ### Cons
-* x
+* Assumes a parametric form for time dependence, which may not be appropriate.
+* Outcome is highly sensitive to the choice of polynomial degree.
+
+## ARIMA Models
+
+It would be remiss not to include at least a comment about ARIMA in an exploration of time series.
+
+Fitting ARIMA models in the presence of our *challenge* conditions appears to be non-trivial. The method hinges on the notion of differencing between sequential observations - however we are primarily interested in the scenario in which there may be gaps in the observed data.
+
+`r margin_note("This appears to go by the name of GLARMA")`
+Moreover the traditional ARIMA model is defined for real valued (normal) response variables: so an extension to the setting of generalised linear models is required.
+
+The random walk model discussed below can be considered an implementation of a continuous time ARIMA(0,1,0) model in a Bayesian setting. 
 
 # Bayesian Approaches
 
@@ -170,7 +208,7 @@ The limitation is that this does not directly put a correlation structure on the
 ### Cons
 * Off-the-shelf applications would only be suitable for stationary time series.
 
-## Propogating Priors
+## Propagating Priors
 
 #### [Code Implementation](https://github.com/odaniel1/bayes-binary-timeseries/tree/refactor-drake/R/fit_prior_propogation.R)
 
@@ -179,7 +217,7 @@ The limitation is that this does not directly put a correlation structure on the
 
 Bayesian calculation for a single binomial samples is particularly straight forward when working with the conjugate prior, the Beta distribution.
 
-It is tempting to consider a timeseries approach where we propogate forward in time using the posterior distribution at the $(n-1)$-th point in time as the prior distribution for the sample at time $n$.
+It is tempting to consider a time series approach where we propagate forward in time using the posterior distribution at the $(n-1)$-th point in time as the prior distribution for the sample at time $n$.
 
 ```{r, results="hide", echo = FALSE}
 model_plots$plot[[which(model_plots$method == "prior-propogation")]]
@@ -203,6 +241,12 @@ An alternative approach using the simple conjugate prior method is a moving aver
 ```{r, results="hide", echo = FALSE}
 model_plots$plot[[which(model_plots$method == "bayes-random-walk")]]
 ```
+
+### Pros
+* x
+
+### Cons
+* x
 
 ## Gaussian Process Logistic Regression
 ```{r, results="hide", echo = FALSE}
