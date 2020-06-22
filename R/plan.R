@@ -1,0 +1,39 @@
+# This is where you write your drake plan.
+# Details: https://books.ropensci.org/drake/plans.html
+
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+
+plan <- drake_plan(
+  
+  answers_tagged = get_se_answers(user_id = 712603, "stackoverflow.com", pagesize = 100, num_pages = 20) %>%
+    tag_se_answers(site = "stackoverflow.com", sleep = 0.5),
+  
+  answers_daily  = summarise_se_answers(answers_tagged, date = as.Date(trunc(creation_date, unit = "day"))),
+  answers_monthly = summarise_se_answers(answers_tagged, date = as.Date(trunc(creation_date, unit = "month"))),
+
+  # models
+  monthly_mle = fit_mle(answers_monthly),
+  logistic_regression_1 = fit_logistic_regression(answers_daily, deg = 1) %>% mutate(method = "logistic-regression-1"),
+  logistic_regression_2 = fit_logistic_regression(answers_daily, deg = 2) %>% mutate(method = "logistic-regression-2"),
+  prior_propogation = fit_prior_propogation(answers_daily),
+  bayes_hier_glm = fit_bayes_hier_glm(answers_monthly),
+  bayes_random_walk = fit_bayes_random_walk(answers_monthly),
+
+  # plots
+  model_plots = bind_rows(
+    monthly_mle,
+    logistic_regression_1,
+    logistic_regression_2,
+    prior_propogation,
+    bayes_hier_glm,
+    bayes_random_walk
+    ) %>%
+    group_nest(method) %>%
+    mutate(
+      plot = map(data, ~plot_acceptance_rate(.))
+    ) %>% select(-data),
+  
+  narrative = render(knitr_in("index.Rmd"), output_file = "index.html")
+
+)
