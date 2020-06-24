@@ -226,7 +226,7 @@ model_plots$plot[[which(model_plots$method == "prior-propogation")]]
 The immediate limitation of this approach is that over time the confidence interval narrows due to the accumulation of the entire history of data (whilst this is not guaranteed it is inevitable in most applied settings where there is not high volatility in the underlying success rate).
 
 `r margin_note("If the Jeffrey's prior,  $\\alpha = \\beta = 1/2$ is used, the Bayesian credible interval will align with the frequentist confidence interval.")`
-An alternative approach using the simple conjugate prior method is a moving averages approach - however in this instance the model has little advantage to a non-Bayesian moving average model (eg. adapting the first model above). 
+An alternative approach using the simple conjugate prior method is a moving averages approach - this model is the Bayesian equivalent of a simple moving average model. 
 
 ### Pros
 * Simple to implement.
@@ -237,23 +237,52 @@ An alternative approach using the simple conjugate prior method is a moving aver
 * Requires time points to be evenly spread - or an assumption that shorter/longer gaps between samples do not effect the correlation.
 
 ## Random walk logistic regression 
-#### [Code Implementation](https://github.com/odaniel1/bayes-binary-timeseries/tree/refactor-drake/R/fit_bayes_random_walk.R)
+#### [Code Implementation](https://github.com/odaniel1/bayes-binary-timeseries/tree/refactor-drake/R/stan/rw-logistic-glm.stan)
 ```{r, results="hide", echo = FALSE}
 model_plots$plot[[which(model_plots$method == "bayes-random-walk")]]
 ```
 
+A random walk model assumes that value of a parameter at a given time is obtained by updating its previous value by adding some (small) additional factor. 
+
+In the case where we are directly modelling the response variable (eg. not in our binary setting, where we are modelling a rate), and when the period between observations is regular, this model can be seen to be equivalent to the ARIMA(0,1,0) model without drift: eg. the difference between successive observations is modelled as noise.
+
+`r margin_note("Linear growth of the variance is justified by the additivity property for variances of random variables")`
+The model we fit is a *random walk logistic regression*: we assume that the [logit](https://en.wikipedia.org/wiki/Logit) of the success probability evolves over time according to a random walk. We allow for the variable time between observations by assuming that the variance of the random walk step is proportional to the time between the observations. 
+
 ### Pros
-* x
+* Well adapted to our challenge conditions of small and infrequent samples.
+* Flexible to inclusion of covariates and hierarchical terms.
 
 ### Cons
-* x
+* Credible intervals/estimates are not smooth.
+
 
 ## Gaussian Process Logistic Regression
-```{r, results="hide", echo = FALSE}
-# model_plots$plot[[which(model_plots$method == "bayes-random-walk-daily")]]
+#### [Code Implementation](https://github.com/odaniel1/bayes-binary-timeseries/tree/refactor-drake/R/stan/gp-logistic-glm-ceq.stan)
+
+`r margin_note("Linear regression corresponds to the case of a linear kernel, whilst the random walk model can be derived from the Brownian motion kernel.")`
+
+Gaussian Process methods are a very general class of models that include as special cases both traditional linear regression models, and the random walk model described above.
+
+```{r, results="hide", echo = FALSE, fig.cap = "Kernel: quadratic exponential"}
+model_plots$plot[[which(model_plots$method == "bayes-gp-ceq")]]
 ```
+
+```{r, results="hide", echo = FALSE, fig.cap = "Kerne: sum of quadratic exponential kernel and linear trend"}
+model_plots$plot[[which(model_plots$method == "bayes-gp-ceq-lin")]]
+```
+
+
+The model provides a probability distribution over all continuous functions on the relevant domain: eg. for us this would be continuous functions describing the (logit of the) acceptance rate. Different functions are weighted by a combination of the observed data, and prior assumptions we make about the temporal correlations and smoothness of the function.
+
+Our prior assumptions are coded in a *kernel* which describes how the covariance between observations behave; Gaussian processes get their flexibility from the fact that we can combine kernels to capture a range of effects such as trends, and seasonal variation.
+
+Katherine Bailey's [blog post](https://katbailey.github.io/post/gaussian-processes-for-dummies/) provides an accessible introduction to the method, whilst [this](https://distill.pub/2019/visual-exploration-gaussian-processes/) article on Distill has some interactive graphics to explore.
+
 ### Pros
-* x
+* Able to make inferences between observations - and (with caution) into the future.
+* Flexible to modelling effects on different scales (eg. intra-hour variation) and with trend terms.
 
 ### Cons
-* x
+* Conceptually harder to grasp.
+* Can take a considerable time to fit (making it impractical to fit many independent models, or a large model with dependencies).

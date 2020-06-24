@@ -1,6 +1,6 @@
 data {
   int<lower=0> N;
-  real<lower=0> time[N];
+  real time[N];
   int count[N];
   int succ[N];
 }
